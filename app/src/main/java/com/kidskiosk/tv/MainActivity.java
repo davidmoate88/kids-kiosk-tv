@@ -17,7 +17,7 @@ import androidx.appcompat.app.AppCompatActivity;
 
 public class MainActivity extends AppCompatActivity {
 
-    private static final String KIOSK_URL = "https://kids-kiosk.vercel.app/tv";
+    private static final String KIOSK_URL = "http://192.168.1.58/tv";
 
     private WebView webView;
     private FrameLayout rootLayout;
