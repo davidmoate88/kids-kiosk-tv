@@ -3,6 +3,7 @@ package com.kidskiosk.tv;
 import android.annotation.SuppressLint;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
@@ -67,6 +68,12 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        // Without explicit focus, D-pad key events have no focused view to
+        // land on and are silently dropped before they ever reach the page.
+        webView.setFocusable(true);
+        webView.setFocusableInTouchMode(true);
+        webView.requestFocus();
+
         webView.loadUrl(KIOSK_URL);
     }
 
@@ -75,7 +82,29 @@ public class MainActivity extends AppCompatActivity {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) {
             enterImmersiveMode();
+            webView.requestFocus();
         }
+    }
+
+    // Hardware media keys (the dedicated play/pause button on a TV remote)
+    // aren't reliably delivered to the page as DOM keyboard events through
+    // WebView's normal key-event translation, so they're bridged directly
+    // into a JS hook the web app registers while a video is playing.
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            switch (event.getKeyCode()) {
+                case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+                case KeyEvent.KEYCODE_MEDIA_PLAY:
+                case KeyEvent.KEYCODE_MEDIA_PAUSE:
+                    webView.evaluateJavascript(
+                            "window.__tvRemotePlayPause && window.__tvRemotePlayPause();", null);
+                    return true;
+                default:
+                    break;
+            }
+        }
+        return super.dispatchKeyEvent(event);
     }
 
     private void enterImmersiveMode() {
