@@ -45,6 +45,12 @@ public class MainActivity extends AppCompatActivity {
         webView.setWebViewClient(new WebViewClient());
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
+            public boolean onConsoleMessage(android.webkit.ConsoleMessage msg) {
+                android.util.Log.d("KidsKioskWeb", msg.message() + " [" + msg.sourceId() + ":" + msg.lineNumber() + "]");
+                return true;
+            }
+
+            @Override
             public void onShowCustomView(View view, CustomViewCallback callback) {
                 if (customView != null) {
                     callback.onCustomViewHidden();
