@@ -1,0 +1,8 @@
+<resources>
+    <!-- Matches kids-kiosk's own tv-bg/tv-accent/tv-accent-300 CSS tokens
+         (app/globals.css) so the native splash reads as the same brand,
+         not a different app's colors for a few hundred ms. -->
+    <color name="tv_ground">#14161F</color>
+    <color name="tv_accent">#9184D9</color>
+    <color name="tv_accent_300">#D2CEFD</color>
+</resources>

@@ -1,6 +1,9 @@
 package com.kidskiosk.tv;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
 import android.annotation.SuppressLint;
+import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.KeyEvent;
@@ -19,10 +22,20 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String KIOSK_URL = "http://192.168.1.58/tv";
 
+    // Never show the splash for less than this even if the page loads
+    // faster (avoids an unpleasant flash), but never hold it longer than
+    // necessary either — see the onPageFinished override below.
+    private static final long SPLASH_MIN_HOLD_MS = 800;
+    private static final long SPLASH_FADE_MS = 300;
+
     private WebView webView;
     private FrameLayout rootLayout;
+    private SplashView splashView;
+    private long splashShownAt;
+    private boolean splashDismissed;
     private View customView;
     private WebChromeClient.CustomViewCallback customViewCallback;
+    private VoiceSearchBridge voiceSearchBridge;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -36,13 +49,24 @@ public class MainActivity extends AppCompatActivity {
         rootLayout.addView(webView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
+        splashView = new SplashView(this);
+        rootLayout.addView(splashView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        splashShownAt = System.currentTimeMillis();
+
         webView.getSettings().setJavaScriptEnabled(true);
         webView.getSettings().setDomStorageEnabled(true);
         webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
         webView.getSettings().setUseWideViewPort(true);
         webView.getSettings().setLoadWithOverviewMode(true);
         webView.getSettings().setTextZoom(100);
-        webView.setWebViewClient(new WebViewClient());
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                dismissSplash();
+            }
+        });
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onConsoleMessage(android.webkit.ConsoleMessage msg) {
@@ -74,6 +98,9 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        voiceSearchBridge = new VoiceSearchBridge(this, webView);
+        webView.addJavascriptInterface(voiceSearchBridge, "AndroidVoiceSearch");
+
         // Without explicit focus, D-pad key events have no focused view to
         // land on and are silently dropped before they ever reach the page.
         webView.setFocusable(true);
@@ -81,6 +108,33 @@ public class MainActivity extends AppCompatActivity {
         webView.requestFocus();
 
         webView.loadUrl(KIOSK_URL);
+    }
+
+    // Called from onPageFinished. Guarded by splashDismissed since
+    // onPageFinished can fire more than once per real navigation (redirects,
+    // sub-frame loads) — the splash should only ever run its hold+fade once.
+    private void dismissSplash() {
+        if (splashDismissed || splashView == null) return;
+        splashDismissed = true;
+
+        long elapsed = System.currentTimeMillis() - splashShownAt;
+        long remaining = Math.max(0, SPLASH_MIN_HOLD_MS - elapsed);
+
+        splashView.postDelayed(() -> {
+            splashView.animate()
+                    .alpha(0f)
+                    .setDuration(SPLASH_FADE_MS)
+                    .setListener(new AnimatorListenerAdapter() {
+                        @Override
+                        public void onAnimationEnd(Animator animation) {
+                            if (splashView == null) return;
+                            splashView.stopAnimating();
+                            rootLayout.removeView(splashView);
+                            splashView = null;
+                        }
+                    })
+                    .start();
+        }, remaining);
     }
 
     @Override
@@ -111,6 +165,15 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         return super.dispatchKeyEvent(event);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == VoiceSearchBridge.RECORD_AUDIO_REQUEST_CODE) {
+            boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            voiceSearchBridge.onPermissionResult(granted);
+        }
     }
 
     private void enterImmersiveMode() {
