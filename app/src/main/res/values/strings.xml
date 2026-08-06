@@ -1,3 +1,8 @@
 <resources>
     <string name="app_name">Kids TV!</string>
+    <string name="load_error_title">Kids TV is reconnecting</string>
+    <string name="load_error_detail">The kiosk server could not be reached.</string>
+    <string name="http_error_detail">The kiosk server returned HTTP %1$d.</string>
+    <string name="retry_status">Trying again automatically in a few seconds.</string>
+    <string name="retry_now">Retry now</string>
 </resources>

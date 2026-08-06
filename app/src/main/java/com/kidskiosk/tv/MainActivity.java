@@ -6,71 +6,142 @@ import android.annotation.SuppressLint;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.SystemClock;
+import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceError;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
+import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 
+import androidx.activity.OnBackPressedCallback;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.webkit.WebMessageCompat;
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
+
+import java.util.Collections;
+import java.util.Set;
 
 public class MainActivity extends AppCompatActivity {
 
-    private static final String KIOSK_URL = "http://192.168.1.58/tv";
-
-    // Never show the splash for less than this even if the page loads
-    // faster (avoids an unpleasant flash), but never hold it longer than
-    // necessary either — see the onPageFinished override below.
+    private static final String TAG = "KidsKioskTV";
+    private static final String KIOSK_URL = BuildConfig.KIOSK_URL;
+    private static final String VOICE_MESSAGE_OBJECT = "AndroidVoiceSearchNative";
     private static final long SPLASH_MIN_HOLD_MS = 800;
     private static final long SPLASH_FADE_MS = 300;
+    private static final long RETRY_DELAY_MS = 5_000;
 
     private WebView webView;
     private FrameLayout rootLayout;
     private SplashView splashView;
+    private KioskErrorView errorView;
+    private KioskUrlPolicy urlPolicy;
     private long splashShownAt;
     private boolean splashDismissed;
+    private boolean mainFrameFailed;
     private View customView;
     private WebChromeClient.CustomViewCallback customViewCallback;
     private VoiceSearchBridge voiceSearchBridge;
+
+    private final Runnable retryRunnable = this::retryKiosk;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        urlPolicy = new KioskUrlPolicy(KIOSK_URL);
         rootLayout = new FrameLayout(this);
         setContentView(rootLayout);
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                if (customView != null) {
+                    hideCustomView();
+                } else if (webView.canGoBack()) {
+                    webView.goBack();
+                } else {
+                    setEnabled(false);
+                    getOnBackPressedDispatcher().onBackPressed();
+                    setEnabled(true);
+                }
+            }
+        });
 
         webView = new WebView(this);
         rootLayout.addView(webView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        showSplash();
 
-        splashView = new SplashView(this);
-        rootLayout.addView(splashView, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        splashShownAt = System.currentTimeMillis();
+        WebSettings settings = webView.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setMediaPlaybackRequiresUserGesture(false);
+        settings.setUseWideViewPort(true);
+        settings.setLoadWithOverviewMode(true);
+        settings.setTextZoom(100);
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(false);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
 
-        webView.getSettings().setJavaScriptEnabled(true);
-        webView.getSettings().setDomStorageEnabled(true);
-        webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
-        webView.getSettings().setUseWideViewPort(true);
-        webView.getSettings().setLoadWithOverviewMode(true);
-        webView.getSettings().setTextZoom(100);
         webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                if (!request.isForMainFrame() || urlPolicy.isAllowed(request.getUrl().toString())) {
+                    return false;
+                }
+                Log.w(TAG, "Blocked navigation outside kiosk origin: " + request.getUrl());
+                return true;
+            }
+
+            @Override
+            public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                super.onPageStarted(view, url, favicon);
+                if (urlPolicy.isAllowed(url)) {
+                    mainFrameFailed = false;
+                }
+            }
+
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                dismissSplash();
+                if (urlPolicy.isAllowed(url) && !mainFrameFailed) {
+                    onKioskLoaded();
+                }
+            }
+
+            @Override
+            public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                super.onReceivedError(view, request, error);
+                if (request.isForMainFrame()) {
+                    showLoadError(getString(R.string.load_error_detail));
+                }
+            }
+
+            @Override
+            public void onReceivedHttpError(
+                    WebView view, WebResourceRequest request, WebResourceResponse errorResponse) {
+                super.onReceivedHttpError(view, request, errorResponse);
+                if (request.isForMainFrame()) {
+                    showLoadError(getString(
+                            R.string.http_error_detail, errorResponse.getStatusCode()));
+                }
             }
         });
+
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onConsoleMessage(android.webkit.ConsoleMessage msg) {
-                android.util.Log.d("KidsKioskWeb", msg.message() + " [" + msg.sourceId() + ":" + msg.lineNumber() + "]");
+                Log.d("KidsKioskWeb", msg.message() + " [" + msg.sourceId() + ":" + msg.lineNumber() + "]");
                 return true;
             }
 
@@ -89,52 +160,147 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onHideCustomView() {
-                if (customView == null) return;
-                webView.setVisibility(View.VISIBLE);
-                rootLayout.removeView(customView);
-                if (customViewCallback != null) customViewCallback.onCustomViewHidden();
-                customView = null;
-                customViewCallback = null;
+                hideCustomView();
             }
         });
 
         voiceSearchBridge = new VoiceSearchBridge(this, webView);
-        webView.addJavascriptInterface(voiceSearchBridge, "AndroidVoiceSearch");
+        installOriginScopedVoiceBridge();
 
-        // Without explicit focus, D-pad key events have no focused view to
-        // land on and are silently dropped before they ever reach the page.
         webView.setFocusable(true);
         webView.setFocusableInTouchMode(true);
         webView.requestFocus();
-
         webView.loadUrl(KIOSK_URL);
     }
 
-    // Called from onPageFinished. Guarded by splashDismissed since
-    // onPageFinished can fire more than once per real navigation (redirects,
-    // sub-frame loads) — the splash should only ever run its hold+fade once.
+    // Both feature guards execute before the annotated AndroidX calls. Lint
+    // cannot currently follow the two independent WebView feature checks.
+    @SuppressLint("RequiresFeature")
+    private void installOriginScopedVoiceBridge() {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            Log.w(TAG, "Voice search disabled: installed WebView is missing secure messaging support");
+            return;
+        }
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            Log.w(TAG, "Voice search disabled: installed WebView is missing secure messaging support");
+            return;
+        }
+
+        Set<String> allowedOrigins = Collections.singleton(urlPolicy.originRule());
+        WebViewCompat.addWebMessageListener(
+                webView,
+                VOICE_MESSAGE_OBJECT,
+                allowedOrigins,
+                (view, message, sourceOrigin, isMainFrame, replyProxy) -> {
+                    if (!isMainFrame || message.getType() != WebMessageCompat.TYPE_STRING) {
+                        return;
+                    }
+                    if ("startListening".equals(message.getData())) {
+                        voiceSearchBridge.startListening();
+                    } else {
+                        Log.w(TAG, "Ignored unknown voice bridge message");
+                    }
+                });
+
+        WebViewCompat.addDocumentStartJavaScript(
+                webView,
+                "window.AndroidVoiceSearch=Object.freeze({startListening:function(){"
+                        + "window." + VOICE_MESSAGE_OBJECT + ".postMessage('startListening');}});",
+                allowedOrigins);
+    }
+
+    private void showSplash() {
+        removeErrorView();
+        if (splashView != null) {
+            splashView.stopAnimating();
+            rootLayout.removeView(splashView);
+        }
+        splashDismissed = false;
+        splashView = new SplashView(this);
+        rootLayout.addView(splashView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        splashShownAt = SystemClock.elapsedRealtime();
+    }
+
     private void dismissSplash() {
         if (splashDismissed || splashView == null) return;
         splashDismissed = true;
 
-        long elapsed = System.currentTimeMillis() - splashShownAt;
+        long elapsed = SystemClock.elapsedRealtime() - splashShownAt;
         long remaining = Math.max(0, SPLASH_MIN_HOLD_MS - elapsed);
+        SplashView viewToDismiss = splashView;
 
-        splashView.postDelayed(() -> {
-            splashView.animate()
+        viewToDismiss.postDelayed(() -> {
+            if (splashView != viewToDismiss) return;
+            viewToDismiss.animate()
                     .alpha(0f)
                     .setDuration(SPLASH_FADE_MS)
                     .setListener(new AnimatorListenerAdapter() {
                         @Override
                         public void onAnimationEnd(Animator animation) {
-                            if (splashView == null) return;
-                            splashView.stopAnimating();
-                            rootLayout.removeView(splashView);
+                            if (splashView != viewToDismiss) return;
+                            viewToDismiss.stopAnimating();
+                            rootLayout.removeView(viewToDismiss);
                             splashView = null;
                         }
                     })
                     .start();
         }, remaining);
+    }
+
+    private void onKioskLoaded() {
+        rootLayout.removeCallbacks(retryRunnable);
+        removeErrorView();
+        webView.setVisibility(View.VISIBLE);
+        dismissSplash();
+        webView.requestFocus();
+    }
+
+    private void showLoadError(String detail) {
+        mainFrameFailed = true;
+        webView.setVisibility(View.GONE);
+        removeSplashImmediately();
+        removeErrorView();
+        errorView = new KioskErrorView(this, detail, this::retryKiosk);
+        rootLayout.addView(errorView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        rootLayout.removeCallbacks(retryRunnable);
+        rootLayout.postDelayed(retryRunnable, RETRY_DELAY_MS);
+    }
+
+    private void retryKiosk() {
+        if (isFinishing() || isDestroyed()) return;
+        rootLayout.removeCallbacks(retryRunnable);
+        mainFrameFailed = false;
+        webView.setVisibility(View.VISIBLE);
+        showSplash();
+        webView.loadUrl(KIOSK_URL);
+    }
+
+    private void removeSplashImmediately() {
+        if (splashView == null) return;
+        splashView.animate().cancel();
+        splashView.stopAnimating();
+        rootLayout.removeView(splashView);
+        splashView = null;
+        splashDismissed = true;
+    }
+
+    private void removeErrorView() {
+        if (errorView == null) return;
+        rootLayout.removeView(errorView);
+        errorView = null;
+    }
+
+    private void hideCustomView() {
+        if (customView == null) return;
+        View viewToRemove = customView;
+        WebChromeClient.CustomViewCallback callback = customViewCallback;
+        customView = null;
+        customViewCallback = null;
+        webView.setVisibility(View.VISIBLE);
+        rootLayout.removeView(viewToRemove);
+        if (callback != null) callback.onCustomViewHidden();
     }
 
     @Override
@@ -146,10 +312,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // Hardware media keys (the dedicated play/pause button on a TV remote)
-    // aren't reliably delivered to the page as DOM keyboard events through
-    // WebView's normal key-event translation, so they're bridged directly
-    // into a JS hook the web app registers while a video is playing.
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         if (event.getAction() == KeyEvent.ACTION_DOWN) {
@@ -171,11 +333,13 @@ public class MainActivity extends AppCompatActivity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == VoiceSearchBridge.RECORD_AUDIO_REQUEST_CODE) {
-            boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            boolean granted = grantResults.length > 0
+                    && grantResults[0] == PackageManager.PERMISSION_GRANTED;
             voiceSearchBridge.onPermissionResult(granted);
         }
     }
 
+    @SuppressWarnings("deprecation")
     private void enterImmersiveMode() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             getWindow().setDecorFitsSystemWindows(false);
@@ -197,13 +361,21 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override
-    public void onBackPressed() {
-        if (customView != null) {
-            webView.getWebChromeClient().onHideCustomView();
-        } else if (webView.canGoBack()) {
-            webView.goBack();
-        } else {
-            super.onBackPressed();
+    protected void onDestroy() {
+        rootLayout.removeCallbacks(retryRunnable);
+        hideCustomView();
+        removeSplashImmediately();
+        if (voiceSearchBridge != null) {
+            voiceSearchBridge.destroy();
         }
+        if (webView != null) {
+            webView.stopLoading();
+            webView.loadUrl("about:blank");
+            webView.clearHistory();
+            rootLayout.removeView(webView);
+            webView.destroy();
+            webView = null;
+        }
+        super.onDestroy();
     }
 }

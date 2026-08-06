@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <!-- Cleartext is limited to the default developer-owned LAN endpoint.
+         Custom debug endpoints should use HTTPS. -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">192.168.1.58</domain>
+    </domain-config>
+</network-security-config>

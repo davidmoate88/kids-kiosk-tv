@@ -1,30 +1,59 @@
 # Kids Kiosk TV
 
-Native Android TV launcher app for the [kids-kiosk](../kids-kiosk) web app. It's a thin
-full-screen WebView wrapper — all the actual UI/content lives in the Next.js app at
-`kids-kiosk.vercel.app/tv`. This app just makes that reachable from an Android TV's
-Leanback launcher, with a proper TV banner, immersive fullscreen, and remote-friendly
-back-button handling (including exiting fullscreen video before backing out of the app).
+Native Android TV launcher for the [kids-kiosk](../kids-kiosk) web app. It is a
+full-screen WebView shell for the TV UI, with a Leanback launcher banner,
+immersive playback, D-pad focus, native voice search, a branded loading screen,
+and automatic recovery when the kiosk server is temporarily unavailable.
 
 - Package: `com.kidskiosk.tv`
 - Min SDK 24, target/compile SDK 34
-- Single file: [`MainActivity.java`](app/src/main/java/com/kidskiosk/tv/MainActivity.java)
+- Release kiosk: `https://kids-kiosk.vercel.app/tv`
+- Debug kiosk: `http://192.168.1.58/tv`
 
 ## Build
 
-No Gradle wrapper is checked in yet. Open the project root in Android Studio and let it
-sync/build, or run Gradle from Android Studio's bundled distribution. A debug build has
-been produced before, so the toolchain is known-good.
+The Gradle wrapper is checked in, so the project builds without a machine-wide
+Gradle installation. Android Studio's bundled JDK is also suitable.
 
-To install on a device/emulator once built:
+```bash
+./gradlew lint test assembleDebug
+```
+
+Install the debug APK on a device or emulator with:
 
 ```bash
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## Notes
+CI runs lint, unit tests, and debug APK assembly for pushes and pull requests.
 
-- The kiosk URL is hardcoded in `MainActivity.java` (`KIOSK_URL`). Point it at a local
-  dev server instead of the deployed Vercel URL when iterating on the web app.
-- Leanback launcher intent filter + `tv_banner` drawable are required for the app to show
-  up on an Android TV home screen.
+## Kiosk endpoints
+
+Build-time Gradle properties override the defaults without editing Java source:
+
+```bash
+./gradlew assembleDebug -PdebugKioskUrl=https://dev-kiosk.example.com/tv
+./gradlew assembleRelease -PreleaseKioskUrl=https://kiosk.example.com/tv
+```
+
+`releaseKioskUrl` must use HTTPS. Release builds deny all cleartext traffic.
+Debug builds permit cleartext traffic only for the default `192.168.1.58`
+endpoint; custom debug endpoints should use HTTPS. Top-level WebView navigation
+and the voice bridge are always restricted to the configured origin.
+
+## Security model
+
+- Top-level WebView navigation is restricted to the configured kiosk origin.
+- File/content URL access and mixed content are disabled.
+- Voice search uses an origin-scoped AndroidX WebKit message listener rather
+  than `addJavascriptInterface`; messages from subframes are ignored.
+- The release network security policy rejects cleartext traffic.
+- If an installed WebView is too old to support origin-scoped messaging, voice
+  search is disabled instead of falling back to an unrestricted native bridge.
+
+## Runtime behavior
+
+The app shows a branded splash until the main kiosk document loads. Main-frame
+network and HTTP failures display a remote-friendly retry screen and trigger an
+automatic retry every five seconds. Fullscreen video exits on Back before normal
+WebView history navigation.
