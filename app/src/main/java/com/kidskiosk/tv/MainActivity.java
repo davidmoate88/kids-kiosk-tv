@@ -13,6 +13,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
+import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
@@ -81,6 +82,18 @@ public class MainActivity extends AppCompatActivity {
         rootLayout.addView(webView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         showSplash();
+
+        // Without this, the embedded YouTube player (served from the
+        // youtube-nocookie.com origin, cross-origin to the kiosk's own)
+        // can never persist any cookie — third-party cookies default to
+        // blocked per-WebView unless explicitly enabled. A client that never
+        // accumulates any YouTube-side cookie continuity looks like a fresh,
+        // automated visitor on every single load, which is exactly what
+        // trips YouTube's embedded sign-in/"confirm you're not a bot" wall
+        // far more readily than a normal browser tab ever does.
+        CookieManager cookieManager = CookieManager.getInstance();
+        cookieManager.setAcceptCookie(true);
+        cookieManager.setAcceptThirdPartyCookies(webView, true);
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
