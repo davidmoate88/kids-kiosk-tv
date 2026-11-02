@@ -3,7 +3,10 @@ package com.kidskiosk.tv;
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.annotation.SuppressLint;
+import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
@@ -36,6 +39,13 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "KidsKioskTV";
     private static final String KIOSK_URL = BuildConfig.KIOSK_URL;
+    // Set by the Tablet Control launcher on the kids' tablets ("george",
+    // "arthur"), so kids-kiosk keeps that child's history and suggestions.
+    // Remembered, so later launches from elsewhere still say who it is.
+    // The living-room box never sets it and gets plain /tv.
+    static final String VIEWER_EXTRA = "com.kidskiosk.tv.VIEWER";
+    private static final String PREFS = "kids_tv";
+    private static final String PREF_VIEWER = "viewer";
     private static final String VOICE_MESSAGE_OBJECT = "AndroidVoiceSearchNative";
     private static final long SPLASH_MIN_HOLD_MS = 800;
     private static final long SPLASH_FADE_MS = 300;
@@ -183,7 +193,31 @@ public class MainActivity extends AppCompatActivity {
         webView.setFocusable(true);
         webView.setFocusableInTouchMode(true);
         webView.requestFocus();
-        webView.loadUrl(KIOSK_URL);
+        webView.loadUrl(startUrl());
+    }
+
+    /** Saves a valid viewer from the launching intent; true if it changed. */
+    private boolean rememberViewer(Intent intent) {
+        String viewer = intent == null ? null : intent.getStringExtra(VIEWER_EXTRA);
+        if (viewer == null || !viewer.matches("[a-z]{1,20}")) return false;
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        if (viewer.equals(prefs.getString(PREF_VIEWER, null))) return false;
+        prefs.edit().putString(PREF_VIEWER, viewer).apply();
+        return true;
+    }
+
+    private String startUrl() {
+        rememberViewer(getIntent());
+        String viewer = getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_VIEWER, null);
+        if (viewer == null) return KIOSK_URL;
+        return Uri.parse(KIOSK_URL).buildUpon().appendQueryParameter("viewer", viewer).build().toString();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (rememberViewer(intent) && webView != null) webView.loadUrl(startUrl());
     }
 
     // Both feature guards execute before the annotated AndroidX calls. Lint
@@ -287,7 +321,7 @@ public class MainActivity extends AppCompatActivity {
         mainFrameFailed = false;
         webView.setVisibility(View.VISIBLE);
         showSplash();
-        webView.loadUrl(KIOSK_URL);
+        webView.loadUrl(startUrl());
     }
 
     private void removeSplashImmediately() {
