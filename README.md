@@ -7,7 +7,7 @@ and automatic recovery when the kiosk server is temporarily unavailable.
 
 - Package: `com.kidskiosk.tv`
 - Min SDK 24, target/compile SDK 34
-- Release kiosk: `https://kids-kiosk.vercel.app/tv`
+- Release kiosk: `https://kids-kiosk.tail6b765.ts.net/tv` (CT 108 over the tailnet; the device needs Tailscale)
 - Debug kiosk: `http://192.168.1.58/tv`
 
 ## Build
