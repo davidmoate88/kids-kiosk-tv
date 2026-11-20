@@ -31,7 +31,7 @@ val debugKioskUrl = validatedKioskUrl(
 )
 val releaseKioskUrl = validatedKioskUrl(
     "releaseKioskUrl",
-    providers.gradleProperty("releaseKioskUrl").orElse("https://kids-kiosk.vercel.app/tv").get(),
+    providers.gradleProperty("releaseKioskUrl").orElse("https://kids-kiosk.tail6b765.ts.net/tv").get(),
     httpsOnly = true,
 )
 
